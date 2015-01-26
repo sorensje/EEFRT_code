@@ -1,0 +1,265 @@
+---
+title: "EEfRT_forPACO"
+output: html_document
+---
+this document is a record of the analysis of EEfRT for PACO
+
+Effrt: LOSS
+----------------
+constants used in analysis
+```{r constants,echo=TRUE}
+N_SKIP_CHOICE = 4 # 4 is more than 10% of trials not making a choice
+N_INCOMPLETE = 4
+```
+
+<br> 
+There are a few subjects for whom we don't (potentially?) have data.
+> 2747, no loss file found
+2687 < 10 trials in file. 
+
+<br> 
+
+```{r packages, echo=FALSE}
+require(reshape2)
+require(ggplot2)
+setwd("/Users/Jim/Dropbox/EEFRT_analysis/")~
+library(reshape2)
+suppressPackageStartupMessages(library('psych'))
+source("~/Dropbox/R/helperfunctions/fixDCastNames.R")
+```
+
+load data, make data frame.
+```{r load data}
+## data file was created with '~Dropbox/PACO_JS/EEfRT_analysis/code/aggregate matlab EEfrt Loss.R'
+lossEffrt_raw <- read.csv("~/Dropbox/PACO_JS/EEfRT_analysis/EEfRTloss_agg_network_nov_2014.csv")
+lossEffrt_raw$subID<-factor(lossEffrt_raw$subID)
+subs <- read.csv("~/Dropbox/PACO_JS/subsGroups.csv")
+subs$Subject<-factor(subs$Subject)
+lossEffrt<-merge(lossEffrt_raw,subs,all.x=T,all.y=F,by.x="subID",by.y="Subject",sort=F)
+
+
+### missing data!
+setdiff(subs$Subject,lossEffrt_raw$subID)
+
+##3 missing subject!
+setdiff(lossEffrt_raw$subID,subs$Subject)
+
+```
+
+some data cleaning.
+```{r data cleaning}
+#how many trials not chosen
+xtabs(~choice+Group,lossEffrt) ##pretty neglibible, skip it for now
+
+# how many trials not completed
+xtabs(~completeTrue+Group,lossEffrt) ##pretty neglibible, skip it for now
+
+
+### find bad 'subjects', choices
+choicesmade <- dcast(lossEffrt,subID+Group~choice,
+      fun.aggregate = length,value.var = "choice",drop = FALSE)
+names(choicesmade) <- fixDCastNames(choicesmade)
+badsubs_fewchoice <- choicesmade[choicesmade$NoAnswer > N_SKIP_CHOICE,'subID',]
+# these subjects missed many choices
+choicesmade[choicesmade$subID==badsubs_fewchoice & choicesmade$s!=0,] #slight hack, if no times chose s, will not be displayed
+
+### find bad 'subjects', completed trials
+completedtrials <- dcast(lossEffrt,subID+Group~completeTrue,
+      fun.aggregate = length,value.var = "choice",drop = FALSE)
+names(completedtrials) <- fixDCastNames(completedtrials)
+badsubs_incomplete <- completedtrials[completedtrials$no > N_INCOMPLETE,'subID']
+#these subjects didnt finish many trials
+completedtrials[completedtrials$subID==badsubs_incomplete & completedtrials$yes!=0 ,]
+
+```
+
+> drop trials not completed, and not chosen, drop bad subs (based on cutoffs)
+
+```{r drop subjects}
+missingDataSubs <- c(2687,2747)
+
+lossEffrt<-lossEffrt[is.finite(lossEffrt$choice),]
+lossEffrt<- lossEffrt[lossEffrt$choice !="No Answer",]
+lossEffrt <- lossEffrt[!lossEffrt$subID %in% c(missingDataSubs,badsubs_incomplete,badsubs_fewchoice),]
+lossEffrt <- lossEffrt[lossEffrt$completeTrue==1,]
+lossEffrt$choosehard<-lossEffrt$difficulty=='h'
+
+```
+
+### Group dif in choosing hard task?
+ratio: total numberhard tasks chosen/number of trials (choices made). Ratios 
+are computed for each subjcet
+
+
+```{r define_hardchoice_ratio, echo=FALSE}
+hardchoices <- aggregate(choosehard~subID+Group,lossEffrt,sum)
+names(hardchoices) <- c("Subject" ,"Group","n_hard")
+choices <- aggregate(choosehard~subID+Group,lossEffrt,length)
+names(choices) <- c("Subject" ,"Group","n_choices")
+
+EEfRTLossSummary<-merge(hardchoices,choices,sort=F)
+EEfRTLossSummary$EEfRT_ratio<-EEfRTLossSummary$n_hard/EEfRTLossSummary$n_choices
+aggregate(EEfRT_ratio~Group,EEfRTLossSummary,mean)
+describeBy(EEfRTLossSummary$EEfRT_ratio,EEfRTLossSummary$Group)
+
+```
+
+
+```{r exploratory graphs}
+ggplot(lossEffrt,aes(x=varAmount,y=as.numeric(choosehard),color=Group))+stat_smooth(method=glm,family='binomial') + geom_point()+facet_grid(Group~prob)
+
+# subjctive effort, choose hard task first
+ggplot(lossEffrt[lossEffrt$choosehard==TRUE,],aes(x=varAmount,y=xScale,color=Group))+geom_smooth(method='lm') + geom_point()+facet_grid(Group~prob)
+
+### using expected value loss, compare 2 tasks
+lossEffrt$EVofLoss <- lossEffrt$varAmount * (1-lossEffrt$prob)
+ggplot(lossEffrt,aes(x=EVofLoss,y=xScale,color=Group))+geom_smooth(method='lm') + geom_point()+facet_grid(Group~choosehard)
+
+# choice by ev of loss
+ggplot(lossEffrt,aes(x=EVofLoss,y=as.numeric(choosehard),color=Group))+stat_smooth(method=glm,family='binomial') + geom_point()+facet_grid(~Group)
+
+```
+
+```{r test_choice_glmer}
+suppressPackageStartupMessages(library('lme4'))
+# suppressPackageStartupMessages(library(lmerTest))
+suppressPackageStartupMessages(library('effects'))
+con<-cbind(CtlvsAll=c(-1,3,-1,-1),GADPUREvMDD=c(-1,0,2,-1),MDDpurevCOmo=c(-1,0,0,1)) # create matrix of desired contrasts, give sensible names to each
+lossEffrt$GroupC2<-C(lossEffrt$Group,con)  #create new factor variable w/ new contrasts 
+contrasts(lossEffrt$GroupC2)
+
+r1 <- glmer(choosehard~GroupC2*EVofLoss + (1|subID),lossEffrt, family='binomial')
+r1slope <- glmer(choosehard~GroupC2*EVofLoss + (1+EVofLoss| subID),lossEffrt, family='binomial')
+# r1slope <- glmer(choosehard~GroupC2*EVofLoss + (1+EVofLoss| subID),lossEffrt[lossEffrt$gotnewinstructions==TRUE,], family='binomial')
+summary(r1)
+summary(r1slope)
+anova(r1slope)
+anova(r1,r1slope)
+allEffects(r1)
+
+
+```
+
+>  need to go to stats consultant. is random slopes approrpiate for logistic regression? (discussion about gees...)
+
+### follow up questions: 
+does how 'hard' I find the task predict how willing I am to do the task? does %choose hard ~ relationship between 
+
+maybe MDDs are more influenced by EV b/c they find the hard task more noxious and are trying to preserve a precious (scarce) resource (effort) - beta_(choice~ev) ~ (difference between subjective effort on hard and subjective effort on easy)
+
+```{r compute_avg_subjectiveEffort}
+subjEffrtTASKsplit <- aggregate(xScale~subID+Group+choosehard,lossEffrt,mean)
+subjEffrtTASKsplit <- dcast(subjEffrtTASKsplit,formula = subID+Group~choosehard)
+names(subjEffrtTASKsplit) <- c("subID","Group","subjEffortEasy","subjEffortHard")
+subjEffrtTASKsplit$subjEffortDiff <- subjEffrtTASKsplit$subjEffortHard - subjEffrtTASKsplit$subjEffortEasy
+
+xtabs(~Group+is.na(subjEffortDiff), subjEffrtTASKsplit) #subjects with undefined difference scores
+
+anova(lm(subjEffortDiff~Group,subjEffrtTASKsplit))
+summary(lm(subjEffortDiff~Group,subjEffrtTASKsplit))
+
+
+```
+
+> 2 comos, 2 controls and 2 MDDs didn't actually choose to ever do the easy task.
+
+### get data on when 
+```{r}
+whenTask <- read.csv("~/Dropbox/EEfRT for grant/when_win_loss_complete.csv")
+
+EEfRTLossSummary <- merge(whenTask,EEfRTLossSummary, by.x = 'subID', by.y = 'Subject')
+aggregate(EEfRT_ratio~winfirst,EEfRTLossSummary,mean)
+aggregate(EEfRT_ratio~winfirst+Group,EEfRTLossSummary,mean)
+
+summary(lm(EEfRT_ratio~winfirst*Group,EEfRTLossSummary)) #task order doesn't seem to matter
+summary(lm(EEfRT_ratio~gotnewinstructions,EEfRTLossSummary)) #instructions might doesn't seem to matter
+aggregate(EEfRT_ratio~winfirst*gotnewinstructions,EEfRTLossSummary,mean) ## new instructions choosing at half...
+
+lossEffrt <- merge(lossEffrt,whenTask)
+ggplot(lossEffrt[aes(x=evLossCoef) + geom_histogram() + facet_grid(~gotnewinstructions)
+
+ggplot(lossEffrt,aes(x=EVofLoss,y=as.numeric(choosehard),color=Group))+stat_smooth(method=glm,family='binomial') + geom_point()+facet_grid(~gotnewinstructions)
+
+ggplot(lossEffrt,aes(x=EVofLoss,y=as.numeric(choosehard),color=Group))+stat_smooth(method=glm,family='binomial') + geom_point()+facet_grid(~gotnewinstructions)
+```
+
+<br>
+
+```{r individual_subject_logistics}
+subs <- unique(lossEffrt$subID) #get subs
+glmDF <- data.frame(subID = subs, evLossCoef = 0,
+                    evLossStdError = 0, evLossPval = 0,
+                    devianceEVloss = 0, devSaturated = 0, modTest = 0 ) # new df
+for ( s in subs) {
+  print(s)
+  rglm <- glm(choosehard~EVofLoss, family= 'binomial', lossEffrt[lossEffrt$subID == s,])
+  glmDF[glmDF$subID == s, 'evLossPval'] <- coef(summary(rglm))[2,4]
+  glmDF[glmDF$subID == s, 'evLossCoef'] <- coef(summary(rglm))[2,1]
+  glmDF[glmDF$subID == s, 'evLossStdError'] <- coef(summary(rglm))[2,2]
+  glmDF[glmDF$subID == s, 'devianceEVloss'] <- deviance(rglm)
+  glmDF[glmDF$subID == s, 'devSaturated'] <- df.residual(rglm)
+  glmDF[glmDF$subID == s, 'modTest'] <- pchisq(deviance(rglm), df.residual(rglm), lower = FALSE)
+}
+glmDF$reasonableFit <- (glmDF$modTest > .05 & !glmDF$modTest == 1)
+
+```
+
+### combine dif of avg subjective effort w/ 'sensitivity' to expected val of loss
+```{r}
+lossLogisticSubjectiv <- merge (glmDF,subjEffrtTASKsplit,all.x= TRUE, all.Y = FALSE)
+lossLogisticSubjectiv <- merge(lossLogisticSubjectiv,whenTask,all.x=TRUE)
+
+### what happens to 2687? they have in the subject group data.  not in subjEffrtTASKsplit
+# are in lossEffrt, are in 
+setdiff(lossLogisticSubjectiv$subID,whenTask$subID)
+setdiff(whenTask$subID,lossLogisticSubjectiv$subID)
+```
+
+what does distribution of coefs look like? 
+
+```{r}
+ggplot(lossLogisticSubjectiv,aes(x=evLossCoef)) + geom_histogram()
+
+lossLogisticSubjectiv[lossLogisticSubjectiv$evLossCoef > 10, 'subID']
+```
+> holy outliers, batman!  
+
+
+```{r} 
+xtabs(~reasonableFit + Group, lossLogisticSubjectiv)
+### did the new instructions matter? possibly not? 
+xtabs(~reasonableFit + gotnewinstructions, lossLogisticSubjectiv)
+summary(xtabs(~reasonableFit + gotnewinstructions, lossLogisticSubjectiv))
+ggplot(lossLogisticSubjectiv,aes(x=evLossCoef)) + geom_histogram() + facet_grid(~gotnewinstructions)
+ggplot(lossLogisticSubjectiv[lossLogisticSubjectiv$reasonableFit == T,],aes(x=evLossCoef)) + geom_histogram() + facet_grid(~gotnewinstructions)
+
+ggplot(lossLogisticSubjectiv[lossLogisticSubjectiv$reasonableFit == T,],aes(x=evLossCoef)) + geom_histogram() + facet_grid(~Group)
+
+## looks messy. maybe meaningless? 
+ggplot(lossLogisticSubjectiv[lossLogisticSubjectiv$reasonableFit == T,],aes(x = evLossCoef,y = subjEffortDiff,color = Group)) +geom_point() + geom_smooth(method = 'lm')+ facet_grid(~Group)
+
+ggplot(lossLogisticSubjectiv,aes(x = subjEffortEasy,y = subjEffortHard,color = Group)) +geom_point() + geom_smooth(method = 'lm')+ facet_grid(~Group)
+
+
+
+```
+> there's no difference in how 
+
+doing this w/ fit is probably a bad idea. maybe in lmer?
+```{r]}
+
+r2 <- lmer(choosehard~GroupC2*EVofLoss + subjEffortDiff+ (1|subID),lossEffrt, family='binomial')
+summary(r2)
+anova(r2)
+allEffects(r2)
+
+```
+
+
+
+
+### post effort questions
+```{r post-effort questions}
+postEEfrtQs <- read.csv("~/Dropbox/PACO_JS/postEffortQs.csv")
+postEEfrtQs$questionLabel <- paste()
+```

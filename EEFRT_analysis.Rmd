@@ -1,0 +1,633 @@
+---
+title: "EEFRT_analysis"
+author: "Jim"
+date: "January 9, 2015"
+output: html_document
+---
+
+Master Document for EFFRT analysis.
+```{r setup, echo=FALSE}
+require(reshape2)
+require(ggplot2)
+require(reshape2)
+require(psych)
+require(lme4)
+
+# where we livin?
+setwd("~/Dropbox/PACO_JS/EEfRT_analysis/")
+
+```
+
+#### retrieve and read in data
+```{r retrive data}
+
+#### get EFFRT data ####
+source("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code/readCleanEffrt.R")
+subFileName <- "~/Dropbox/PACO_JS/subsGroups.csv"
+eFileNameWin <- "~/Dropbox/PACO_JS/EEfRT_analysis/Effort_Data/EEfRTwin_agg_matlab_Sept2014.csv"
+eFileNameLoss <- "~/Dropbox/PACO_JS/EEfRT_analysis//Effort_Data/EEfRTloss_agg_network_nov_2014.csv"
+  
+winEffrt <- readCleanEffrt(eFileNameWin,subFileName,dropPracticeTrials = TRUE,
+                           cleanIncompletes = FALSE,
+                           cleanChoices = TRUE,
+                           dropBadSubsChoice = FALSE, dropBadSubsIncomplete = FALSE)  
+                            #by deafult, dropping subjects who skipped making choices 4 times
+winBadSubs <- 2841 #2841 didn't complete many trials
+winEffrt <- winEffrt[!winEffrt$subID %in% c(2841), ] #2687 had bad data, see tracker
+
+
+
+lossEffrt <- readCleanEffrt(eFileNameLoss,subFileName,dropPracticeTrials = TRUE,
+                           cleanIncompletes = FALSE,
+                           cleanChoices = TRUE,
+                           dropBadSubsChoice = FALSE, dropBadSubsIncomplete = FALSE)
+                            
+#                             dropBadSubsChoice = FALSE, dropBadSubsIncomplete = FALSE)
+lossEffrt <- lossEffrt[!lossEffrt$subID %in% c(2687), ] #2687 had bad data, see tracker
+
+```
+
+
+## count numbers before the drop
+
+```{r raw numbers no drops}
+### win
+winEffrRaw <- readCleanEffrt(eFileNameWin,subFileName,dropPracticeTrials = TRUE,
+                           cleanIncompletes = FALSE,
+                           cleanChoices = FALSE,
+                           dropBadSubsChoice = FALSE, dropBadSubsIncomplete = FALSE)  
+
+countsWin<- aggregate(choosehard~subID+Group,winEffrRaw,length)
+xtabs(~Group,countsWin)
+
+### loss
+lossEffrRaw <- readCleanEffrt(eFileNameLoss,subFileName,dropPracticeTrials = TRUE,
+                           cleanIncompletes = FALSE,
+                           cleanChoices = FALSE,
+                           dropBadSubsChoice = FALSE, dropBadSubsIncomplete = FALSE)  
+
+
+countsLoss<- aggregate(choosehard~subID+Group,lossEffrRaw,length)
+xtabs(~Group,countsLoss)
+```
+
+
+```{r get teps, echo=FALSE}
+#### get teps #### 
+source("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code/teps_from_qualtrics.R",echo = FALSE)
+```
+
+
+```{r find Cheaters}
+source("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code/findCheatTrials.R")
+winRTfile <- "~/Dropbox/PACO_JS/EEfRT_analysis/Effort_Data/EEfRT_WIN_RTs.csv"
+lossRtfile <- "~/Dropbox/PACO_JS/EEfRT_analysis/Effort_Data/EEfRT_LOSS_RTs.csv"
+
+winEffrt <- findCheatTrials(winEffrt,winRTfile,1)
+lossEffrt <- findCheatTrials(lossEffrt,lossRtfile,1)
+
+# sum up total cheated trials
+winEffrt <- getTotalBySub(winEffrt,"didCheat","subID","totalCheat",printAgg = FALSE)
+lossEffrt <- getTotalBySub(lossEffrt,"didCheat","subID","totalCheat",printAgg = FALSE)
+
+#drop cheat trials
+winEffrt <- winEffrt[winEffrt$didCheat == FALSE, ]
+lossEffrt <- lossEffrt[lossEffrt$didCheat == FALSE, ]
+
+```
+
+
+ 
+```{r determine how many participants being dropped}
+
+
+winEffrt <- getTotalBySub(winEffrt,"RateTask","subID","totalTrialsAfterDrops",T)
+lossEffrt <- getTotalBySub(lossEffrt,"RateTask","subID","totalTrialsAfterDrops",T)
+
+# how many subs have fewer than 10 
+winEffrt$dropRatio <- winEffrt$totalTrialsAfterDrops / winEffrt$totalTrialsNoDrops
+lossEffrt$dropRatio <- lossEffrt$totalTrialsAfterDrops / lossEffrt$totalTrialsNoDrops
+
+# hist(grabSubTotals(winEffrt,"totalTrialsAfterDrops"))
+# hist(grabSubTotals(lossEffrt,"totalTrialsAfterDrops"))
+# sum(grabSubTotals(winEffrt,"totalTrialsAfterDrops") < 10)
+# sum(grabSubTotals(lossEffrt,"totalTrialsAfterDrops") < 20)
+
+### how many subjects had more than half of their trials dropped
+
+# sum(grabSubTotals(winEffrt,"dropRatio") < .5)
+# sum(grabSubTotals(lossEffrt,"dropRatio") < .5)
+
+badWinSubs <- unique(winEffrt[winEffrt$dropRatio < .5 ,'subID'])
+badWinSubs <-  c(as.numeric(as.character(badWinSubs)), 2841)#from above
+winEffrt <- winEffrt[!winEffrt$subID %in% badWinSubs, ]
+
+badLossSubs <- unique(lossEffrt[lossEffrt$dropRatio < .5 ,'subID'])
+badLossSubs <-  c(as.numeric(as.character(badLossSubs)), 2687)#from above
+lossEffrt <- lossEffrt[!lossEffrt$subID %in% badLossSubs, ]
+
+```
+
+### count participants after drops
+
+```{r count after drops}
+cat("win drops")
+countsWin<- aggregate(choosehard~subID+Group,winEffrt,length)
+xtabs(~Group,countsWin)
+
+cat("loss drops")
+countsLoss<- aggregate(choosehard~subID+Group,lossEffrt,length)
+xtabs(~Group,countsLoss)
+
+```
+
+
+what are raw percentages of hard tasks chosen?
+
+```{r pct choose hard win }
+
+hardchoices <- aggregate(choosehard~subID+Group,winEffrt,sum)
+names(hardchoices)<-c("Subject" ,"Group","n_hard")
+choices<- aggregate(choosehard~subID+Group,winEffrt,length)
+names(choices)<-c("Subject" ,"Group","n_choices")
+
+EEfRTsummary<-merge(hardchoices,choices,sort=F)
+EEfRTsummary$EEfRT_ratio<-EEfRTsummary$n_hard/EEfRTsummary$n_choices
+aggregate(EEfRT_ratio~Group,EEfRTsummary,mean)
+describeBy(EEfRTsummary$EEfRT_ratio,EEfRTsummary$Group)
+
+# how many subjects in each group do we have?
+# xtabs(~Group,choices)
+```
+
+
+#### test Group differences in hard choices formally w/ glmer
+
+``` {r}
+suppressPackageStartupMessages(library('lme4'))
+con<-cbind(CtlvsAll=c(-1,3,-1,-1),GADPUREvMDD=c(-1,0,2,-1),MDDpurevCOmo=c(-1,0,0,1)) # create matrix of desired contrasts, give sensible names to each
+winEffrt$GroupC2<-C(winEffrt$Group,con)  #create new factor variable w/ new contrasts 
+contrasts(winEffrt$GroupC2)
+levels(winEffrt$Group)
+con2<-cbind(CtlGADvsAllMDD=c(-1,1,1,-1),GADvCTL=c(0,-1,1,0),MDDpurevCOmo=c(-1,0,0,1)) #
+winEffrt$GroupCctlgad <-C(winEffrt$Group,con2)  #create new factor variable w/ new contrasts 
+contrasts(winEffrt$GroupCctlgad)
+
+r1<-glmer(choosehard~GroupC2+(1|subID),family=binomial,winEffrt)
+
+summary(r1)
+
+anova(r1)
+```
+
+
+if model as psychopathology only 
+``` {r}
+winEffrt$hasPsychopathology <- winEffrt$Group != "CTL"
+
+r2<-glmer(choosehard~winEffrt$hasPsychopathology+(1|subID),family=binomial,winEffrt)
+summary(r2)
+anova(r2)
+```
+
+
+
+
+#### if we test exepected value contrasts, treating group as mdd, ctl, como, gad etc...
+
+```{r testing expected value win }
+
+r3<-glmer(choosehard~GroupC2*expectedvalueHARD+(1|subID),family=binomial,winEffrt)
+summary(r3)
+anova(r3)
+
+confint(r3,method = "boot")
+
+```
+
+####  use random slopes?
+```{r testing expected value win random slopes}
+r3Slopes <-glmer(choosehard~GroupC2*expectedvalueHARD+(1+expectedvalueHARD|subID),family=binomial,winEffrt)
+r3Slopes
+```
+
+> it's not clear if we should use random slopes or not here
+
+#### model all psychopathology vs none.
+
+```{r expected value win, psychopathology}
+# r4randSlope <-glmer(choosehard~hasPsychopathology*expectedvalueHARD+(1+expectedvalueHARD|subID),family=binomial,winEffrt)
+# summary(r4randSlope)
+# anova(r4randSlope)
+# 
+# 
+r4 <-glmer(choosehard~hasPsychopathology*expectedvalueHARD+(1|subID),family=binomial,winEffrt)
+summary(r4)
+anova(r4)
+
+```
+
+
+```{r expected value binomial model graph}
+p1<-ggplot(winEffrt,aes(x=expectedvalueHARD,y=as.numeric(choosehard),color=Group))+geom_point(alpha=.05)+stat_smooth(method=glm,family='binomial')
+p1+facet_grid(~Group) + ggtitle("probability of choosing hard task as fucntion of Expected value of hard task by Group")
+
+
+```
+
+#### win graph split by subject
+```{r  expected value binomial model graph by subj}
+p1<-ggplot(winEffrt,aes(x=expectedvalueHARD,y=as.numeric(choosehard),color=subID))+geom_point(alpha=.05)+stat_smooth(method=glm,family='binomial', se = FALSE)
+p1+facet_grid(~Group) + ggtitle("probability of choosing hard task as fucntion of Expected value of hard task by Group")
+
+```
+### try analyses looking at just MDD pures vs. CTLs
+
+```{r MDD v. Control}
+winEctlVpure <- winEffrt[winEffrt$Group %in% c("MDD","COMO","CTL"),]
+winEctlVpure$GroupMC <- winEctlVpure$Group == 'CTL'
+winEctlVpure$GroupMC <- factor(winEctlVpure$GroupMC, labels = c("MDD","CTL"))
+
+r3MDDvCTLev <-glmer(choosehard~GroupMC*expectedvalueHARD+(1|subID),family=binomial,winEctlVpure)
+summary(r3MDDvCTLev)
+anova(r3MDDvCTLev)
+
+
+# r3MDDvCTLevSlope <-glmer(choosehard~GroupMC*expectedvalueHARD+(1+expectedvalueHARD|subID),family=binomial,winEctlVpure)
+# summary(r3MDDvCTLevSlope)
+
+````
+
+### Win Correlat with teps? 
+
+```{r teps correlate with effrt}
+## look at teps, just correlate w/ % of hard tasks chosen
+
+EEfRTsummaryTEPS <- merge(teps2merge,EEfRTsummary)
+str(EEfRTsummaryTEPS)
+
+p1<-ggplot(EEfRTsummaryTEPS,aes(x=ant,y=EEfRT_ratio))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+effrtAnt <- lm(EEfRT_ratio~ant,EEfRTsummaryTEPS)
+summary(lm(EEfRT_ratio~ant,EEfRTsummaryTEPS))
+
+effrtAntGroup <- lm(EEfRT_ratio~ant*Group,EEfRTsummaryTEPS)
+anova(effrtAntGroup)
+
+p1<-ggplot(EEfRTsummaryTEPS,aes(x=cons,y=EEfRT_ratio,color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+rConGroup <- lm(EEfRT_ratio~cons*Group,EEfRTsummaryTEPS)
+anova(rConGroup)
+
+rConVsAnt <- lm(EEfRT_ratio~cons+ant,EEfRTsummaryTEPS)
+anova(rConVsAnt)
+anova(effrtAnt,rConVsAnt) #worth adding consummatory to model? 
+summary(rConVsAnt)
+
+rConVsAntGroup <- lm(EEfRT_ratio~cons+ant +Group,EEfRTsummaryTEPS)
+anova(rConVsAntGroup)
+
+```
+
+#### trying similar analysis on just lower probability 
+
+```{r}
+
+### can modify this chunck
+hardchoices50 <- aggregate(choosehard~subID+Group,winEffrt[winEffrt$prob == .5, ],sum)
+names(hardchoices50)<-c("Subject" ,"Group","n_hard")
+choices50<- aggregate(choosehard~subID+Group,winEffrt[winEffrt$prob == .5, ],length)
+names(choices50)<-c("Subject" ,"Group","n_choices")
+
+EEfRTsummary50<-merge(hardchoices50,choices50,sort=F)
+EEfRTsummary50$EEfRT_ratio50<-EEfRTsummary50$n_hard/EEfRTsummary50$n_choices
+aggregate(EEfRT_ratio50~Group, EEfRTsummary50,mean)
+describeBy(EEfRTsummary50$EEfRT_ratio50,EEfRTsummary50$Group)
+
+hardchoicesProb <- aggregate(choosehard~subID+Group + prob,winEffrt,sum)
+names(hardchoicesProb)<-c("Subject" ,"Group","prob","n_hard")
+choicesProb<- aggregate(choosehard~subID+Group + prob,winEffrt,length)
+names(choicesProb)<-c("Subject" ,"Group","prob","n_choices")
+
+eSummaryProb <- merge(hardchoicesProb,choicesProb)
+
+eSummaryProb$eRatioProb <- eSummaryProb$n_hard / eSummaryProb$n_choices
+ggplot(eSummaryProb,aes(x = factor(prob), y = eRatioProb, color = Group)) + geom_boxplot()
+
+##
+ggplot(eSummaryProb,aes(x = Group, y = eRatioProb, color = factor(prob))) + geom_boxplot()
+
+
+eSummaryProbTeps <- merge(eSummaryProb,teps2merge)
+### 
+str(eSummaryProbTeps)
+eSummaryProbTeps$GroupC2<-C(eSummaryProbTeps$Group,con)  #create new factor variable w/ new contrasts
+rANOVA <- lmer(eRatioProb~prob*GroupC2 + (1|Subject),eSummaryProbTeps)
+anova(rANOVA)
+
+
+#### teps vs prob? 
+
+p1<-ggplot(eSummaryProbTeps,aes(x=ant,y=eRatioProb,color = factor(prob)))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+p1 + facet_grid(~Group) # a mess
+
+p1<-ggplot(eSummaryProbTeps,aes(x=cons,y=eRatioProb,color = factor(prob)))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+```
+
+
+
+## Loss Version
+
+
+ - do we need extra cleaning? 
+
+```{r loss summary , echo=FALSE}
+hardchoices <- aggregate(choosehard~subID+Group,lossEffrt,sum)
+names(hardchoices) <- c("Subject" ,"Group","n_hard")
+choices <- aggregate(choosehard~subID+Group,lossEffrt,length)
+names(choices) <- c("Subject" ,"Group","n_choices")
+
+EEfRTLossSummary<-merge(hardchoices,choices,sort=F)
+EEfRTLossSummary$EEfRT_ratio<-EEfRTLossSummary$n_hard/EEfRTLossSummary$n_choices
+aggregate(EEfRT_ratio~Group,EEfRTLossSummary,mean)
+describeBy(EEfRTLossSummary$EEfRT_ratio,EEfRTLossSummary$Group)
+
+```
+
+
+Explore loss data 
+
+```{r exploratory graphs}
+#### is this the actual way we should calculate EV of loss?
+# double check loss instruction.
+lossEffrt$EVofLoss <- lossEffrt$varAmount * (1-lossEffrt$prob)
+
+# choice by ev of loss
+ggplot(lossEffrt,aes(x=EVofLoss,y=as.numeric(choosehard),color=Group))+stat_smooth(method=glm,family='binomial') + geom_point(alpha=.05)+facet_grid(~Group) + ggtitle("prob choose hard function of EV of losss for choosing easy, LOSS ")
+
+```
+
+
+#### try to model loss in similar way as win (with expected value)
+
+```{r loss with slopes}
+
+con<-cbind(CtlvsAll=c(-1,3,-1,-1),GADPUREvMDD=c(-1,0,2,-1),MDDpurevCOmo=c(-1,0,0,1)) # create matrix of desired contrasts, give sensible names to each
+con2 <- cbind()
+lossEffrt$GroupC2<-C(lossEffrt$Group,con)
+
+
+r3lossEV <-glmer(choosehard~GroupC2*EVofLoss+(1|subID),family=binomial,lossEffrt)
+anova(r3lossEV)
+summary(r3lossEV)
+allEffects(r3lossEV)
+```
+
+```{r ev of loss with slopes}
+### effect goes away. 
+r3lossEVSlopes <-glmer(choosehard~GroupC2*EVofLoss+(1|subID),family=binomial,lossEffrt,control=glmerControl(optimizer="bobyqa"))
+anova(r3lossEVSlopes)
+summary(r3lossEVSlopes)
+
+```
+
+> overall, I think I'm excited about this findings. to me it looks like the (pure) MDDs are
+the weird ones in the loss, and the CTls are the weird ones for the win. Basically, it looks like anxiety is confering some extra motivation to work - but during the loss version.  looking at the individual strategies (allbeit not systematically) participants with lower logistic coeefficients are the ones who endorse strategies like "i went for hard to challenge myself and because I lost less, or unless my pinky hurt", but participants with high coeffs went with strategies like 
+
+#### graph EV vs choose hard for  loss by subject 
+```{r logistic ev of loss graph by subj}
+ggplot(lossEffrt,aes(x=EVofLoss,y=as.numeric(choosehard),color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~Group) 
+
+```
+
+> there is a ton of variety in the slopes here. does this mean subjects didn't understand it? maybe they had very different ways of evaluating
+
+
+
+### look at choice over time?
+
+```{r get logistic fits loss, echo = FALSE}
+subs <- unique(lossEffrt$subID) #get subs
+glmDF <- data.frame(subID = subs, evLossCoef = 0,
+                    evLossStdError = 0, evLossPval = 0,
+                    devianceEVloss = 0, devSaturated = 0, modTest = 0 ) # new df
+for ( s in subs) {
+  print(s)
+  rglm <- glm(choosehard~EVofLoss, family= 'binomial', lossEffrt[lossEffrt$subID == s,],)  
+  glmDF[glmDF$subID == s, 'evLossPval'] <- coef(summary(rglm))[2,4]
+  glmDF[glmDF$subID == s, 'evLossCoef'] <- coef(summary(rglm))[2,1]
+  glmDF[glmDF$subID == s, 'evLossStdError'] <- coef(summary(rglm))[2,2]
+  glmDF[glmDF$subID == s, 'devianceEVloss'] <- deviance(rglm)
+  glmDF[glmDF$subID == s, 'devSaturated'] <- df.residual(rglm)
+  glmDF[glmDF$subID == s, 'modTest'] <- pchisq(deviance(rglm), df.residual(rglm), lower = FALSE)
+}
+glmDF$reasonableFit <- (glmDF$modTest > .05 & !glmDF$modTest == 1)
+
+```
+
+now see if the people with weird fits data graphs... or not
+```{r}
+lossWithFits <- merge(lossEffrt,glmDF)
+ggplot(lossWithFits,aes(x=EVofLoss,y=as.numeric(choosehard),color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~reasonableFit) 
+
+## to throw out people with reasonable fits is to double dip, probably...
+r3lossEVSlopes <-glmer(choosehard~GroupC2*EVofLoss+(1+EVofLoss|subID),family=binomial,lossWithFits[lossWithFits$reasonableFit==TRUE,],control=glmerControl(optimizer="bobyqa"))
+anova(r3lossEVSlopes)
+summary(r3lossEVSlopes)
+
+ggplot(lossWithFits[lossWithFits$reasonableFit==TRUE,],aes(x=EVofLoss,y=as.numeric(choosehard),color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~Group) 
+
+```
+
+I'm still very puzzeled by subjects with negative values. what are their strategies look like?
+
+```{r viewing strategies and fits}
+lossWithFits <- lossWithFits[order(lossWithFits$evLossCoef),]
+str(lossWithFits)
+View(unique(lossWithFits[lossWithFits$reasonableFit==TRUE,c('evLossCoef','subID','Group')]))
+
+
+# 2858 says they played 'at random'
+# 2834 i went for hard to challenge myself and because I lost less, or unless my pinky hurt.
+subsInCoefOrder <- glmDF[,'subID']
+
+ggplot(lossEffrt[lossEffrt$subID == 2792,],aes(x=EVofLoss,y=as.numeric(choosehard),color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~Group) 
+
+for (sub in subsInCoefOrder[seq(1,68,4)]){
+  coefToGraph <-  glmDF[glmDF$subID == sub,'evLossCoef']
+  print(ggplot(lossEffrt[lossEffrt$subID == sub,],aes(x=EVofLoss,y=as.numeric(choosehard),
+                                                color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~Group) + ggtitle(paste("EV loss coef: ",coefToGraph)))
+}
+
+# for (sub in subsInCoefOrder[seq(1,68,4)]){
+for (sub in subsInCoefOrder[1:15]){
+  coefToGraph <-  glmDF[glmDF$subID == sub,'evLossCoef']
+  print(ggplot(lossEffrt[lossEffrt$subID == sub,],aes(x=EVofLoss,y=as.numeric(choosehard),
+                                                color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + geom_point()+facet_grid(~Group) + ggtitle(paste("EV loss coef: ",coefToGraph)))
+}
+
+## of negatives... maybe 2762 truly confused.  others might be doing probability, not varAmount
+
+```
+
+
+```
+
+
+```{r save graphs by group}
+
+pdf("lossLogitsByGroupBySubject.pdf")
+
+groups <- levels(lossWithFits$Group)
+for (g in groups){
+  graphTitle <- paste("prob choosing hard by EV of loss for ", g, sep = "")
+  p1 <- ggplot(lossWithFits[lossWithFits$Group == g,],aes(x=EVofLoss,y=as.numeric(choosehard),color=subID))+stat_smooth(method=glm,family='binomial', se = FALSE) + ggtitle(graphTitle)
+  print(p1)
+}
+graphics.off()
+
+```
+
+
+### does teps predict loss the same way it does win?
+> actually, now I'm just off the rails. this is messy, do not trust
+
+```{r teps and loss}
+names(EEfRTLossSummary) <- c("Subject","Group","n_hard_loss","n_choices_loss","EEfRT_ratio_Loss")
+lossSummaryTEPS <- merge(teps2merge,EEfRTLossSummary)
+str(lossSummaryTEPS)
+
+p1<-ggplot(lossSummaryTEPS,aes(x=ant,y=EEfRT_ratio))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+ggplot(lossSummaryTEPS,aes(x=ant,y=EEfRT_ratio, color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+
+effrtAnt <- lm(EEfRT_ratio~ant,lossSummaryTEPS)
+summary(lm(EEfRT_ratio~ant,lossSummaryTEPS))
+
+effrtAntGroup <- lm(EEfRT_ratio~ant*Group,lossSummaryTEPS)
+anova(effrtAntGroup)
+
+p1<-ggplot(lossSummaryTEPS,aes(x=cons,y=EEfRT_ratio,color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+rConGroup <- lm(EEfRT_ratio~cons*Group,lossSummaryTEPS)
+anova(rConGroup)
+
+rConVsAnt <- lm(EEfRT_ratio~cons+ant,lossSummaryTEPS)
+anova(rConVsAnt)
+anova(effrtAnt,rConVsAnt) #worth adding consummatory to model? 
+summary(rConVsAnt)
+
+rConVsAntGroup <- lm(EEfRT_ratio~cons+ant +Group,lossSummaryTEPS)
+anova(rConVsAntGroup)
+names (lossSummaryTEPS)
+
+lossNwinSummary <- merge(EEfRTsummary,lossSummaryTEPS)
+str(lossNwinSummary)
+p1<-ggplot(lossNwinSummary,aes(x=EEfRT_ratio,y = EEfRT_ratio_Loss,color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+rLossWinGroup <- lm(EEfRT_ratio~EEfRT_ratio_Loss * Group,lossNwinSummary)
+summary(rLossWinGroup)
+
+rLossWinLossFits <- merge(glmDF,lossNwinSummary, by.x = 'subID', by.y = 'Subject')
+
+str(rLossWinLossFits)
+p1<-ggplot(rLossWinLossFits[rLossWinLossFits$reasonableFit == TRUE,],aes(x=EEfRT_ratio_Loss,y = evLossCoef,color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+p1<-ggplot(rLossWinLossFits,aes(x=ant,y = EEfRT_ratio_Loss,color = Group))+geom_point()+stat_smooth(method='lm', se = FALSE)
+p1
+
+
+```
+
+
+combine win and loss, look at task as a factor
+```{r}
+eefrtM <- melt(lossNwinSummary[,c('Subject','Group','EEfRT_ratio','EEfRT_ratio_Loss')])
+names(eefrtM) <- c("Subject","Group","variable","eefrtScore")
+eefrtM$effrtVersion <- factor(ifelse(eefrtM$variable == 'EEfRT_ratio_Loss',yes = 'loss','win' ))
+
+rVersion <- lmer(value~Group*effrtVersion + (1|Subject), eefrtM)
+anova(rVersion)
+
+ggplot(eefrtM, aes(x =effrtVersion , y = eefrtScore, color = Group )) + geom_boxplot()
+```
+
+
+```{r}
+
+
+lossEffrt$moneyLost <- 0
+
+for (r in 1:dim(lossEffrt)[1]){
+  if(lossEffrt[r,'choosehard']){
+   lossEffrt[r,'moneyLost'] <- lossEffrt[r,'varAmount'] * as.numeric(lossEffrt[r,'winSelect'] == 'l') 
+  } else{
+    lossEffrt[r,'moneyLost'] <- 1 * as.numeric(lossEffrt[r,'winSelect'] == 'l')
+  }
+}
+
+cashLost <- aggregate(moneyLost~subID + Group,lossEffrt,sum)
+ggplot(cashLost, aes(x =Group , y = moneyLost, color = Group )) + geom_boxplot()
+
+winEffrt$moneyWon <- 0
+for (r in 1:dim(winEffrt)[1]){
+  if(winEffrt[r,'choosehard']){
+   winEffrt[r,'moneyWon'] <- winEffrt[r,'varAmount'] * as.numeric(winEffrt[r,'winSelect'] == 'w')* as.numeric(lossEffrt[r,'completeTrue'])
+  } else{
+    winEffrt[r,'moneyWon'] <- 1 * as.numeric(winEffrt[r,'winSelect'] == 'w')* as.numeric(lossEffrt[r,'completeTrue'])
+  }
+}
+
+cashWon <- aggregate(moneyWon~subID + Group,winEffrt,sum)
+ggplot(cashWon, aes(x =Group , y = moneyWon, color = Group )) + geom_boxplot()
+
+```
+
+
+
+#### RT analysis:
+
+idea: influenced by amatai's presentation. RT should be longest when choice between easy and difficult task is hardest (ie, decision point)
+
+prediction: we should see that RTs form an inverted u distribution if plot expected value on x axis
+> MDD's average indifference point (as measured by RT) should be lower. than CTLS
+
+
+```{r}
+# compute RT
+winEffrt$choiceRT <- winEffrt$choiceoffset - winEffrt$choiceonset
+winEffrt$logChoiceRT <- log(winEffrt$choiceRT)
+
+# vusalize
+ggplot(winEffrt, aes( x = logChoiceRT)) +geom_histogram() 
+
+ggplot(winEffrt, aes( x = choiceRT)) +geom_histogram() 
+
+ggplot(winEffrt, aes(x = expectedvalueHARD, y = logChoiceRT, color = subID)) + geom_point(alpha = .5) + geom_line()
+
+
+for (sub in levels(winEffrt$subID)[1:10]){
+  print(ggplot(winEffrt[winEffrt$subID == sub,], aes(x = expectedvalueHARD, y = logChoiceRT, color = subID)) + geom_point(alpha = .5) + geom_line())
+}
+
+
+# is there quadratic componenet?
+
+rRTquad <- lmer(logChoiceRT~poly(expectedvalueHARD,2) + (1|subID),winEffrt)
+summary(rRTquad)
+
+rRTquadGroup <- lmer(logChoiceRT~poly(expectedvalueHARD,2)*Group + (1|subID),winEffrt)
+summary(rRTquadGroup)
+anova(rRTquadGroup)
+
+ggplot(winEffrt, aes(x = expectedvalueHARD, y = logChoiceRT, color = Group)) + geom_point(alpha = .5) + geom_smooth()
+
+```

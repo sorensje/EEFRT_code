@@ -1,0 +1,93 @@
+---
+title: "EEfRT_forPACO"
+output: html_document
+---
+Record of the Analysis of the PACO EFFRT Data
+started: 1/9/2015
+
+Effrt: wins
+----------------
+constants used in analysis
+```{r constants, echo=TRUE}
+N_SKIP_CHOICE = 4 # 4 is more than 10% of trials not making a choice
+N_INCOMPLETE = 4
+```
+
+```{r libraries, echo=FALSE}
+require(reshape2)
+require(ggplot2)
+setwd("/Users/Jim/Dropbox/EEFRT_analysis/")
+library(reshape2)
+suppressPackageStartupMessages(library('psych'))
+source("~/Dropbox/R/helperfunctions/fixDCastNames.R")
+```
+
+load data, make data frame.
+```{r load win data}
+winEffrt_raw <- read.csv("~/Dropbox/PACO_JS/EEfRT_analysis/EEfRTwin_agg_matlab_Sept2014.csv")
+winEffrt_raw$subID<-factor(winEffrt_raw$subID)
+subs <- read.csv("~/Dropbox/PACO_JS/subsGroups.csv")
+subs$Subject<-factor(subs$Subject)
+winEffrt<-merge(winEffrt_raw,subs,all.x=T,all.y=F,by.x="subID",by.y="Subject",sort=F)
+
+
+```
+
+some data cleaning.
+```{r find bad subjects}
+#how many trials not chosen
+xtabs(~choice+Group,winEffrt) ##pretty neglibible, skip it for now
+
+# how many trials not completed
+xtabs(~completeTrue+Group,winEffrt) ##pretty neglibible, skip it for now
+
+
+### find bad 'subjects', choices
+choicesmade <- dcast(winEffrt,subID+Group~choice,
+      fun.aggregate = length,value.var = "choice",drop = FALSE)
+names(choicesmade) <- fixDCastNames(choicesmade)
+badsubs_fewchoice <- choicesmade[choicesmade$NoAnswer > N_SKIP_CHOICE,'subID',]
+# these subjects missed many choices
+choicesmade[choicesmade$subID==badsubs_fewchoice & choicesmade$s!=0,] #slight hack, if no times chose s, will not be displayed
+
+### find bad 'subjects', completed trials
+completedtrials <- dcast(winEffrt,subID+Group~completeTrue,
+      fun.aggregate = length,value.var = "choice",drop = FALSE)
+names(completedtrials) <- fixDCastNames(completedtrials)
+badsubs_incomplete <- completedtrials[completedtrials$no > N_INCOMPLETE,'subID']
+#these subjects didnt finish many trials
+completedtrials[completedtrials$subID==badsubs_incomplete & completedtrials$yes!=0 ,]
+
+```
+
+> drop trials not completed, and not chosen, drop bad subs (based on cutoffs)
+
+```{r clean data}
+
+winEffrt<-winEffrt[is.finite(winEffrt$choice),]
+winEffrt<- winEffrt[winEffrt$choice !="No Answer",]
+winEffrt <- winEffrt[!winEffrt$subID %in% c(badsubs_incomplete,badsubs_fewchoice),]
+winEffrt <- winEffrt[winEffrt$completeTrue==1,]
+winEffrt$choosehard<-winEffrt$difficulty=='h'
+
+```
+
+### Group dif in choosing hard task?
+ratio: total numberhard tasks chosen/number of trials (choices made). Ratios 
+are computed for each subjcet
+
+
+```{r define_hardchoice_ratio, echo=FALSE}
+hardchoices <- aggregate(choosehard~subID+Group,winEffrt,sum)
+names(hardchoices) <- c("Subject" ,"Group","n_hard")
+choices <- aggregate(choosehard~subID+Group,winEffrt,length)
+names(choices) <- c("Subject" ,"Group","n_choices")
+
+EEfRTsummary<-merge(hardchoices,choices,sort=F)
+EEfRTsummary$EEfRT_ratio<-EEfRTsummary$n_hard/EEfRTsummary$n_choices
+aggregate(EEfRT_ratio~Group,EEfRTsummary,mean)
+describeBy(EEfRTsummary$EEfRT_ratio,EEfRTsummary$Group)
+WinEEfRTsummary <- EEfRTsummary
+```
+
+
