@@ -74,7 +74,9 @@ xtabs(~Group,countsLoss)
 
 ```{r get teps, echo=FALSE}
 #### get teps #### 
-source("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code/teps_from_qualtrics.R",echo = FALSE)
+# source("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code/teps_from_qualtrics.R",echo = FALSE)
+setwd("~/Dropbox/PACO_JS/EEfRT_analysis/EEFRT_code")
+source("teps_from_qualtrics.R")
 ```
 
 

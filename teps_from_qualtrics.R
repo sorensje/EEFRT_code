@@ -1,4 +1,4 @@
-source("~/Dropbox/PACO/Qualtrics/QualtricsHelperFunctions.R")
+source("QualtricsHelperFunctions.R")
 library('stringr')
 
 
